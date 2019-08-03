@@ -71,6 +71,8 @@
 #include "can.h"
 #include "modnetwork.h"
 
+#include "customs/tft_lcd.h"
+
 #if MICROPY_PY_THREAD
 STATIC pyb_thread_t pyb_thread_main;
 #endif
@@ -522,6 +524,10 @@ void stm32_main(uint32_t reset_mode) {
     uart_attach_to_repl(&pyb_uart_repl_obj, true);
     MP_STATE_PORT(pyb_uart_obj_all)[MICROPY_HW_UART_REPL - 1] = &pyb_uart_repl_obj;
     #endif
+
+	// TFT LCD Init
+	lcd_init();
+	lcd_test_text();
 
 soft_reset:
 

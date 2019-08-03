@@ -7,6 +7,11 @@
 
 #include "boards/stm32f7xx_hal_conf_base.h"
 
+// ENABLE LTDC Library
+#include "stm32f7xx_hal_ltdc.h"
+#define HAL_LTDC_MODULE_ENABLED
+
+
 // Oscillator values in Hz
 #define HSE_VALUE (25000000)
 #define LSE_VALUE (32768)
