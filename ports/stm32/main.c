@@ -527,7 +527,7 @@ void stm32_main(uint32_t reset_mode) {
 
 	// TFT LCD Init
 	lcd_init();
-	lcd_test_text();
+	// lcd_test_text();
 
 soft_reset:
 

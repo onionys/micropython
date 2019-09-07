@@ -1,10 +1,12 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
+#include <stdint.h>
 #include "tft_lcd.h"
 #include "sdram.h"
 #include "stm32f7xx_hal.h"
 #include "customs/font8x8/font8x8_basic.h"
+#include "customs/L8_320x240.h"
 // #include "customs/debug_info.h"
 
 #define LCD_DISP_PIN 			GPIO_PIN_12
@@ -21,12 +23,12 @@
 // static volatile uint8_t _framebuffer[LCD_WIDTH * LCD_HEIGHT] = {0};
 
 // -- Text Buffer 60 x 34 for saving ASCII code
-static volatile uint8_t _textbuffer[60 * 34] = {0};
+static volatile uint8_t _textbuffer[TEXT_COL_MAX * TEXT_ROW_MAX] = {0};
 
 static uint16_t text_col = 0;
 static uint16_t text_row = 0;
-
-// static uint8_t reload_flag = 0;
+static uint16_t text_color = 0x00ff;
+static uint16_t text_color_bg = 0x0000;
 
 static LTDC_HandleTypeDef 	hltdc_F;
 static LTDC_LayerCfgTypeDef	pLayerCfg;
@@ -36,26 +38,23 @@ static void __lcd_periph_config();
 static void __lcd_pins_config();
 static void __lcd_framebuffer_config(uint32_t FBStartAdress);
 
-// -- for callback of DMA2D
-// static void __lcd_transfer_complete(DMA2D_HandleTypeDef *hdma2d);
-// static void __lcd_transfer_error(DMA2D_HandleTypeDef *hdma2d);
-// static void __lcd_dma2d_msp_init();
-// static void __lcd_dma2d_msp_deinit();
-
-
-static void __handle_ctrl_symbol(char ch);
-
 // -- cursor move operation
 static void __text_cursor_move_forward();
 static void __text_cursor_move_backward();
+static void __text_clear_row(uint16_t row_num);
+static void __text_cursor_row_head();
+static void __text_scroll_down();
+static void __text_cursor_newline();
 
-// static void __text_cursor_move_left();
-// static void __text_cursor_move_right();
-// static void __text_cursor_move_up();
-// static void __text_cursor_move_down();
+
+static void _draw_pixel_rgb565(uint16_t x, uint16_t y, uint16_t color_code);
+static void _draw_pixel_l8(uint16_t x, uint16_t y, uint16_t color_code);
+
+
 
 /*
- * LCD Clock configuration
+ * LCD Clock configuration info
+ * ---------------------------------------------------------
  * PLLSAI_VCO Input = HSE_VALUE/PLL_M = 1 Mhz 
  * PLLSAI_VCO Output = PLLSAI_VCO Input * PLLSAIN = 192 Mhz
  * PLLLCDCLK = PLLSAI_VCO Output/PLLSAIR = 192/5 = 38.4 Mhz
@@ -166,8 +165,7 @@ void __lcd_framebuffer_config(uint32_t FBStartAdress){
 	pLayerCfg.WindowY0 = 0;
 	pLayerCfg.WindowY1 = 272;
 
-	pLayerCfg.PixelFormat = LTDC_PIXEL_FORMAT_RGB565;
-	// pLayerCfg.PixelFormat = LTDC_PIXEL_FORMAT_L8; // use CLUT
+	pLayerCfg.PixelFormat = PIXEL_FORMAT; // defined in tft_lcd.h
 	pLayerCfg.FBStartAdress = FBStartAdress;
 
 	pLayerCfg.Alpha = 255;
@@ -194,81 +192,25 @@ void __lcd_framebuffer_config(uint32_t FBStartAdress){
 	
 
 	// -- config the CLUT
-	// HAL_LTDC_ConfigCLUT(&hltdc_F, (uint32_t *) L8_320x240_CLUT, 256, 0); // - for layer 1
-	// HAL_LTDC_EnableCLUT(&hltdc_F, 0); // for layer 1
+	if(pLayerCfg.PixelFormat == LTDC_PIXEL_FORMAT_L8){
+		// PF("[pixel format][CLUT]\r\n");
+		HAL_LTDC_ConfigCLUT(&hltdc_F, (uint32_t *) L8_320x240_CLUT, 256, 0); // - for layer 1
+		HAL_LTDC_EnableCLUT(&hltdc_F, 0); // for layer 1
+	}else{
+		// PF("[pixel format][RGB565]\r\n");
+	}
 	HAL_LTDC_ProgramLineEvent(&hltdc_F, 0);
 }
 
 
 
 
-//static void __lcd_dma2d_msp_init(){
-//  __HAL_RCC_DMA2D_CLK_ENABLE();
-//  HAL_NVIC_SetPriority(DMA2D_IRQn, 0, 0);
-//  HAL_NVIC_EnableIRQ(DMA2D_IRQn);  
-//}
-
-// static void __lcd_dma2d_msp_deinit(){
-//   __HAL_RCC_DMA2D_FORCE_RESET();
-//   __HAL_RCC_DMA2D_RELEASE_RESET();
-// }
-
-// void lcd_dma2d_config(){
-//     Dma2dHandle.Init.Mode         = DMA2D_M2M_BLEND; /* DMA2D mode Memory to Memory with Blending */
-//     Dma2dHandle.Init.ColorMode    = DMA2D_OUTPUT_RGB565; /* output format of DMA2D */
-//     Dma2dHandle.Init.OutputOffset = 0x0;  /* No offset in output */
-//   
-//     Dma2dHandle.XferCpltCallback  = __lcd_transfer_complete;
-//     Dma2dHandle.XferErrorCallback = __lcd_transfer_error;
-//   
-//     /* Foreground layer Configuration */
-//     Dma2dHandle.LayerCfg[1].AlphaMode = DMA2D_REPLACE_ALPHA;
-//     Dma2dHandle.LayerCfg[1].InputAlpha = 0x7F; /* 127 : semi-transparent */
-//     Dma2dHandle.LayerCfg[1].InputColorMode = DMA2D_INPUT_RGB565;
-//     Dma2dHandle.LayerCfg[1].InputOffset = 0x0; /* No offset in input */
-//   
-//     /* Background layer Configuration */
-//     Dma2dHandle.LayerCfg[0].AlphaMode = DMA2D_REPLACE_ALPHA;
-//     Dma2dHandle.LayerCfg[0].InputAlpha = 0x7F; /* 127 : semi-transparent */
-//     Dma2dHandle.LayerCfg[0].InputColorMode = DMA2D_INPUT_RGB565;
-//     Dma2dHandle.LayerCfg[0].InputOffset = 0x0; /* No offset in input */
-//   
-//     Dma2dHandle.Instance = DMA2D;
-//   
-//     if(HAL_OK != HAL_DMA2D_Init(&Dma2dHandle)){
-//   	  printf("[DMA2D Init ERROR]\r\n");
-//     }
-//   
-//     HAL_DMA2D_ConfigLayer(&Dma2dHandle,0);
-//     HAL_DMA2D_ConfigLayer(&Dma2dHandle,1);
-// }
-
-// static void __lcd_transfer_complete(DMA2D_HandleTypeDef *hdma2d){
-// 	/* */
-// }
-
-// static void __lcd_transfer_error(DMA2D_HandleTypeDef *hdma2d){
-// 	/* */
-// 	// PF("[LCD Transfer ERROR]\r\n");
-// 	while(1){
-// 		HAL_Delay(1000);
-// 	}
-// }
-
 void lcd_init(){
-	// uint32_t fb_len = sizeof(uint16_t) * LCD_WIDTH * LCD_HEIGHT;
-	// PF("[lcd_init][fb len:%lu]\n\r", fb_len);
-	// uint16_t * fb_ptr = malloc(fb_len);
 	uint16_t * fb_ptr = sdram_start();
 	memset(fb_ptr,0,1024*256);
-
-	// PF("[fb_ptr][%p]\r\n", fb_ptr);
 	__lcd_pins_config();
 	__lcd_periph_config();
 	__lcd_framebuffer_config((uint32_t)fb_ptr);
-
-	// __lcd_dma2d_msp_init();
-	// __lcd_dma2d_config();
 }
 
 void lcd_deinit(){
@@ -277,12 +219,7 @@ void lcd_deinit(){
 }
 
 void lcd_test_run(){
-	// reload_flag = 0;
 	HAL_LTDC_Reload(&hltdc_F, LTDC_RELOAD_IMMEDIATE);
-	// while(reload_flag == 0){
-	// 	PF("[...]\r\n");
-	// 	HAL_Delay(100);
-	// }
 }
 
 /*
@@ -290,12 +227,31 @@ void lcd_test_run(){
  * */
 
 void lcd_draw_pixel(uint16_t x, uint16_t y, uint16_t color_code){
+	switch(pLayerCfg.PixelFormat){
+		case LTDC_PIXEL_FORMAT_L8:
+			_draw_pixel_l8(x,y,color_code);
+			break;
+		case LTDC_PIXEL_FORMAT_RGB565:
+			_draw_pixel_rgb565(x,y,color_code);
+			break;
+		default:
+			break;
+	}
+}
+
+static void _draw_pixel_rgb565(uint16_t x, uint16_t y, uint16_t color_code){
 	volatile uint16_t * fb_ptr = (uint16_t *) pLayerCfg.FBStartAdress;
 	if((x < LCD_WIDTH) && (y < LCD_HEIGHT))
 		fb_ptr[y * LCD_WIDTH + x] = color_code;
 }
 
+static void _draw_pixel_l8(uint16_t x, uint16_t y, uint16_t color_code){
+	volatile uint8_t * fb_ptr = (uint8_t *) pLayerCfg.FBStartAdress;
+	if((x < LCD_WIDTH) && (y < LCD_HEIGHT))
+		fb_ptr[y * LCD_WIDTH + x] = (uint8_t)(color_code & 0x00FF);
+}
 
+// ---------------------
 void lcd_draw_char(uint16_t x, uint16_t y, char ch, uint16_t color_code){
 	uint8_t *pixel_line_ptr = (uint8_t *)font8x8_basic[(uint8_t)ch];
 	uint8_t x_shift,y_shift;
@@ -328,13 +284,6 @@ void lcd_draw_char_bg(uint16_t x, uint16_t y, char ch, uint16_t color_code, uint
 	}
 }
 
-void lcd_draw_rec(uint16_t x,uint16_t y,uint16_t x_len,uint16_t y_len, uint16_t color_code){
-	for(uint16_t y_shift = 0 ; y_shift < y_len ; y_shift++ ){
-		for(uint16_t x_shift = 0 ; x_shift < x_len ; x_shift++ ){
-			lcd_draw_pixel(x + x_shift,y + y_shift, color_code);
-		}
-	}
-}
 
 uint16_t lcd_read_pixel(uint16_t x, uint16_t y){
 	// __IO uint16_t (*_fb)[480] = &_framebuffer;
@@ -342,33 +291,11 @@ uint16_t lcd_read_pixel(uint16_t x, uint16_t y){
 	return ((uint8_t *) pLayerCfg.FBStartAdress)[y * LCD_WIDTH + x];
 }
 
-// void lcd_chk_rec(uint16_t x,uint16_t y,uint16_t x_len,uint16_t y_len, uint16_t rgb){
-// 	volatile uint8_t * fb_ptr = (uint8_t *) pLayerCfg.FBStartAdress;
-// 	uint16_t start_point = LCD_WIDTH * y + x;
-// 	for(uint16_t y_shift = 0 ; y_shift < y_len ; y_shift++){
-// 		for(uint16_t x_shift = 0 ; x_shift < x_len; x_shift++){
-// 			if(fb_ptr[start_point + x_shift] != rgb){
-// 				PF("(%u,%u)\r\n", x + x_shift, y + y_shift);
-// 			}
-// 		}
-// 		start_point += LCD_WIDTH;
-// 	}
-// 	PF("[rec chk done!]\r\n");
-// }
-
-void lcd_rewrite(){
-	volatile uint16_t * fb_ptr = (uint16_t *) pLayerCfg.FBStartAdress;
-	uint32_t fb_len = LCD_WIDTH * LCD_HEIGHT;
-	// memcpy(fb_ptr, fb_ptr, fb_len);
-	for(uint32_t i = 0 ;i<fb_len;i++){
-		fb_ptr[i] = fb_ptr[i];
-	}
-}
 
 void lcd_draw_text(uint16_t col, uint16_t row, char ch){
 	uint16_t x = 8 * col;
 	uint16_t y = 8 * row;
-	lcd_draw_char_bg(x,y,ch,0xff,0x00);
+	lcd_draw_char_bg(x,y,ch,0x00ff,0x0000);
 }
 
 
@@ -377,6 +304,13 @@ void lcd_draw_text_color(uint16_t col, uint16_t row, char ch,uint16_t color_code
 	uint16_t x = 8 * col;
 	uint16_t y = 8 * row;
 	lcd_draw_char(x,y,ch,color_code);
+}
+
+
+
+void lcd_draw_set_text_color(uint16_t chr_color, uint16_t bg_color){
+	text_color = chr_color;
+	text_color_bg = bg_color;
 }
 
 /*
@@ -391,32 +325,167 @@ void lcd_text_refresh(){
 	}
 }
 
+
 void lcd_text_putc(char ch){
-	// PF("[putc][%u][%u][ASCII:%u]\r\n",text_row, text_col, ch);
+	// PF("[lcd text putc][%c][%d]\r\n",ch,ch);
 	if(ch > 126){
-		// TODO : handle latin-1 ISO8859 ? 
 		ch = ' ';
+		lcd_text_putuint(ch);
 		return;
 	}else if (ch < 32){
-		__handle_ctrl_symbol(ch);
+		switch(ch){
+			case 0 ... 6: break;
+			case 7: break;
+			case '\b': // \b == 8
+				__text_cursor_move_backward();
+				_textbuffer[text_row * TEXT_COL_MAX + text_col] = 0;
+				lcd_draw_text(text_col, text_row,' ');
+				break;
+			case '\r': // \r == 10
+				__text_cursor_row_head();
+				// __text_cursor_newline();
+				break;
+			case '\n': // \r == 13
+				// __text_cursor_row_head();
+				__text_cursor_newline();
+				break;
+			default:
+				lcd_text_putuint(ch);
+				break;
+		}
 		return;
 	}
-
 	_textbuffer[text_row * TEXT_COL_MAX + text_col] = ch;
 	// -- write to memory
 	lcd_draw_text(text_col, text_row, ch);
 	__text_cursor_move_forward();
 }
 
-void lcd_get_cursor_col_row(uint16_t * col, uint16_t * row){
+void lcd_text_putstr(const char *str, uint16_t len){
+	uint16_t i = 0;
+	for(i=0;i<len;i++)lcd_text_putc(str[i]);
+	SCB_CleanDCache();
+}
+
+void lcd_text_putuint(uint8_t val){
+	uint8_t low = val & 0x0f;
+	uint8_t high = (val & 0xf0) >> 4;
+	char ch = 0;
+	lcd_draw_text(text_col,text_row,'*');
+	__text_cursor_move_forward();
+	if(high <= 9){
+		ch = '0' + high;
+	}else{
+		ch = 'A' + high - 10;
+	}
+	lcd_draw_text(text_col,text_row,ch);
+	__text_cursor_move_forward();
+
+	if(low <= 9){
+		ch = '0' + low;
+	}else{
+		ch = 'A' + low - 10;
+	}
+	lcd_draw_text(text_col,text_row,ch);
+	__text_cursor_move_forward();
+	lcd_draw_text(text_col,text_row,' ');
+	__text_cursor_move_forward();
+}
+
+// void     lcd_text_put_color_c(char ch, uint8_t R, uint8_t G, uint8_t B){;}
+// void     lcd_text_put_color_str(const char *str, uint16_t len, uint8_t R, uint8_t G, uint8_t B){;}
+
+
+/* -----------------------------
+ * cursor about action implement
+ * -----------------------------
+ * */
+
+// void     lcd_text_cur_mv_up(uint16_t cnt){;}
+// void     lcd_text_cur_mv_down(uint16_t cnt){;}
+// void     lcd_text_cur_mv_right(uint16_t cnt){;}
+// void     lcd_text_cur_mv_left(uint16_t cnt){;}
+
+
+
+
+void lcd_text_cur_pos(uint16_t * col, uint16_t * row){
 	*col = text_col;
 	*row = text_row;
 }
 
 
-/*
+
+
+static void __text_cursor_move_forward(){
+	text_col++;
+	if(text_col >= TEXT_COL_MAX){
+		text_col = 0;
+		text_row ++;
+	}
+	if(text_row >= TEXT_ROW_MAX){
+		text_row = 0;
+		text_col = 0;
+	}
+}
+
+static void __text_cursor_move_backward(){
+	if(text_col > 0){
+		text_col--;
+	}
+}
+
+static void __text_clear_row(uint16_t row_num){
+	if(row_num <= TEXT_ROW_MAX){
+		uint16_t col = 0;
+		for(col=0;col<TEXT_COL_MAX;col++){
+			_textbuffer[TEXT_COL_MAX*row_num + col] = 0;
+			lcd_draw_text(col,row_num,' ');
+		}
+	}
+}
+
+
+static void __text_cursor_row_head(){
+	text_col = 0;
+}
+
+static void __text_scroll_down(){
+	uint16_t row_i = 0;
+	for(row_i=0;row_i<(TEXT_ROW_MAX-1);row_i++){
+		uint16_t col_i = 0;
+		for(col_i=0;col_i<TEXT_COL_MAX;col_i++){
+			_textbuffer[TEXT_COL_MAX*row_i + col_i] = 
+			_textbuffer[TEXT_COL_MAX*(row_i+1) + col_i];
+		}
+	}
+	lcd_text_refresh();
+}
+
+static void __text_cursor_newline(){
+
+	// reach the bottom
+	text_row ++;
+	if(text_row >= TEXT_ROW_MAX){
+		text_row = TEXT_ROW_MAX - 1;
+		__text_scroll_down();
+	}
+	// clean this line
+	__text_clear_row(text_row);
+}
+
+
+
+
+
+/* ------------------
  * LCD TEST FUNCTIONS
+ * ------------------
  * */
+
+
+
+
 void lcd_test_text(){
   uint8_t i = 0;
   uint8_t j = 0;
@@ -459,94 +528,3 @@ void lcd_test_text_BS(){
 		HAL_Delay(200);
 	}
 }
-
-// void HAL_LTDC_ReloadEventCallback(LTDC_HandleTypeDef *hltdc){
-// 	reload_flag = 1;
-// }
-
-void lcd_mem_info(){
-	// volatile uint16_t * fb_ptr = (uint16_t *) pLayerCfg.FBStartAdress;
-	// PF("---------------------------\r\n");
-	// PF("[fb mem start][%p]\r\n", fb_ptr);
-	// PF("\r\n");
-	// PF("[textbf mem start][%p]\r\n", _textbuffer);
-	// PF("[textbf mem end  ][%p]\r\n", (uint8_t*)_textbuffer + sizeof(_textbuffer));
-	// PF("[textbf mem size ][%lu]\r\n", sizeof(_textbuffer));
-	// PF("---------------------------\r\n");
-}
-
-static void __handle_ctrl_symbol(char ch){
-	switch(ch){
-		case 0: break;
-		case 1: break;
-		case 2: break;
-		case 3: break;
-		case 4: break;
-		case 5: break;
-		case 6: break;
-		case 7: break;
-		case 8: // BS 
-			__text_cursor_move_backward();
-			_textbuffer[text_row * TEXT_COL_MAX + text_col] = 0;
-			lcd_draw_text(text_col, text_row,' ');
-			break;
-		case 9: break;
-		case 10: // \n
-			text_row = (text_row >= TEXT_ROW_MAX)?(TEXT_ROW_MAX):(text_row+1);
-			// TODO roll up text buffer
-			break;
-		case 11: break;
-		case 12: break;
-		case 13: // \r
-			text_col = 0;
-			break;
-		case 14: break;
-		case 15: break;
-		case 16: break;
-		case 17: break;
-		case 18: break;
-		case 19: break;
-		case 20: break;
-		case 21: break;
-		case 22: break;
-		case 23: break;
-		case 24: break;
-		case 25: break;
-		case 26: break;
-		case 27: break;
-		case 28: break;
-		case 29: break;
-		case 30: break;
-		case 31: break;
-		default:
-			// ch = 0;
-			;
-	}
-}
-
-
-static void __text_cursor_move_forward(){
-	text_col++;
-	if(text_col >= TEXT_COL_MAX){
-		text_col = 0;
-		text_row ++;
-	}
-	if(text_row >= TEXT_ROW_MAX){
-		text_row = 0;
-		text_col = 0;
-	}
-}
-
-static void __text_cursor_move_backward(){
-	if(text_col == 0){
-		if(text_row > 0){
-			text_row--;
-			text_col=TEXT_COL_MAX;
-			return;
-		}
-		return;
-	}else{
-		text_col--;
-	}
-}
-
