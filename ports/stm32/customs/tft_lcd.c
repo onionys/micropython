@@ -366,37 +366,6 @@ void lcd_text_putc(char ch){
 	// PF("[lcd text putc][%c][%d]\r\n",ch,ch);
 	console.putch(&console,ch);
 	// lcd_text_putuint(ch);
-//	if(ch > 126){
-//		ch = ' ';
-//		lcd_text_putuint(ch);
-//		return;
-//	}else if (ch < 32){
-//		switch(ch){
-//			case 0 ... 6: break;
-//			case 7: break;
-//			case '\b': // \b == 8
-//				__text_cursor_move_backward(1);
-//				_textbuffer[text_row * TEXT_COL_SIZE + text_col] = 0;
-//				lcd_draw_text(text_col, text_row,' ');
-//				break;
-//			case '\r': // \r == 10
-//				__text_cursor_row_head();
-//				// __text_cursor_newline();
-//				break;
-//			case '\n': // \r == 13
-//				// __text_cursor_row_head();
-//				__text_cursor_newline();
-//				break;
-//			default:
-//				lcd_text_putuint(ch);
-//				break;
-//		}
-//		return;
-//	}
-//	_textbuffer[text_row * TEXT_COL_SIZE + text_col] = ch;
-//	// -- write to memory
-//	lcd_draw_text(text_col, text_row, ch);
-//	__text_cursor_move_forward();
 }
 
 void lcd_text_putstr(const char *str, uint16_t len){
@@ -438,14 +407,6 @@ void lcd_text_putuint(uint8_t val){
  * cursor about action implement
  * -----------------------------
  * */
-
-// void     lcd_text_cur_mv_up(uint16_t cnt){;}
-// void     lcd_text_cur_mv_down(uint16_t cnt){;}
-// void     lcd_text_cur_mv_right(uint16_t cnt){;}
-// void     lcd_text_cur_mv_left(uint16_t cnt){;}
-
-
-
 
 void lcd_text_cur_pos(uint16_t * col, uint16_t * row){
 	*col = text_col;
@@ -534,6 +495,111 @@ static void __text_cursor_newline(){
 	__text_clear_row(text_row);
 }
 
+/*
+ * ctrl_ function implement
+ * */
+
+static void ctrl_CUU(dec_parser * con_ptr){
+ 	uint16_t count = con_ptr->params[0];
+ 	if(count == 0) count = 1;
+ 	__text_cursor_move_up(count);
+}
+
+
+static void ctrl_CUD(dec_parser * con_ptr){
+	uint16_t count = con_ptr->params[0];
+	if(count == 0) count = 1;
+	__text_cursor_move_down(count);
+}
+
+
+static void ctrl_CUF(dec_parser * con_ptr){
+	uint16_t count = con_ptr->params[0];
+	if(count == 0) count = 1;
+	__text_cursor_move_forward(count);
+}
+
+
+static void ctrl_CUB(dec_parser * con_ptr){
+	uint16_t count = con_ptr->params[0];
+	if(count == 0) count = 1;
+	__text_cursor_move_backward(count);
+}
+ 
+
+static void ctrl_LF(dec_parser * con_ptr){
+	__text_cursor_newline();
+}
+ 
+
+static void ctrl_CR(dec_parser * con_ptr){
+	__text_cursor_row_head();
+}
+
+
+static void ctrl_BS(dec_parser * con_ptr){
+	__text_cursor_move_backward(1);
+	// _textbuffer[text_row * TEXT_COL_SIZE + text_col] = con_ptr->ch;
+	// lcd_draw_text(text_col, text_row, ' ');
+}
+
+
+static void ctrl_ETX(dec_parser * con_ptr){
+	// ctrl C 
+	lcd_draw_text(text_col, text_row, '^');
+	_textbuffer[text_row * TEXT_COL_SIZE + text_col] = '^';
+	__text_cursor_move_forward(1);
+	lcd_draw_text(text_col, text_row, 'C');
+	_textbuffer[text_row * TEXT_COL_SIZE + text_col] = 'C';
+	__text_cursor_move_forward(1);
+}
+
+
+static void ctrl_print(dec_parser * con_ptr){
+	char ch = con_ptr->ch;
+	if(ch > 126){
+		ch = ' ';
+		// lcd_text_putuint(ch);
+		return;
+	}else if (ch < 32){
+		switch(ch){
+			case 0 ... 6: break;
+			case 7: break;
+			case '\b': // \b == 8
+				__text_cursor_move_backward(1);
+				break;
+			case '\r': // \r == 10
+				__text_cursor_row_head();
+				break;
+			case '\n': // \r == 13
+				__text_cursor_newline();
+				break;
+			default:
+				// lcd_text_putuint(ch);
+				break;
+		}
+		return;
+	}
+	_textbuffer[text_row * TEXT_COL_SIZE + text_col] = ch;
+	// -- write to memory
+	lcd_draw_text(text_col, text_row, ch);
+	__text_cursor_move_forward(1);
+}
+
+
+static void ctrl_EL(dec_parser * con_ptr){
+	for(uint16_t col = text_col;col<TEXT_COL_SIZE;col++){
+		_textbuffer[text_row * TEXT_COL_SIZE + col] = 0;
+		lcd_draw_text(col,text_row,' ');
+	}
+}
+
+
+static void ctrl_dummy(dec_parser * con_ptr){
+	lcd_text_putc('*');
+	lcd_text_putuint(con_ptr->ch);
+}
+
 
 
 
@@ -574,114 +640,4 @@ void lcd_test_text_mode(){
 	}
 	ch ++;
 	if(ch >= 125) ch = ' ';
-}
-
-void lcd_test_text_BS(){
-	static char ch = '!';
-	// static uint16_t count = 0;
-	for(int i = 0 ;i<TEXT_COL_SIZE+3;i++){
-		lcd_text_putc(ch++);
-		if(ch >= 125) ch = ' ';
-	}
-	for(int i = 0;i<10;i++){
-		lcd_text_putc(8);
-		HAL_Delay(200);
-	}
-}
-
-static void ctrl_CUU(dec_parser * con_ptr){
- 	uint16_t count = con_ptr->params[0];
- 	if(count == 0) count = 1;
- 	__text_cursor_move_up(count);
-}
-
-static void ctrl_CUD(dec_parser * con_ptr){
-	uint16_t count = con_ptr->params[0];
-	if(count == 0) count = 1;
-	__text_cursor_move_down(count);
-}
-
-static void ctrl_CUF(dec_parser * con_ptr){
-	uint16_t count = con_ptr->params[0];
-	if(count == 0) count = 1;
-	__text_cursor_move_forward(count);
-}
-
-static void ctrl_CUB(dec_parser * con_ptr){
-	uint16_t count = con_ptr->params[0];
-	if(count == 0) count = 1;
-	__text_cursor_move_backward(count);
-}
- 
-static void ctrl_LF(dec_parser * con_ptr){
-	__text_cursor_newline();
-}
- 
-static void ctrl_CR(dec_parser * con_ptr){
-	__text_cursor_row_head();
-	__text_cursor_newline();
-}
-
-static void ctrl_BS(dec_parser * con_ptr){
-	__text_cursor_move_backward(1);
-	_textbuffer[text_row * TEXT_COL_SIZE + text_col] = con_ptr->ch;
-	lcd_draw_text(text_col, text_row, ' ');
-}
-
-static void ctrl_ETX(dec_parser * con_ptr){
-	// ctrl C 
-	lcd_draw_text(text_col, text_row, '^');
-	_textbuffer[text_row * TEXT_COL_SIZE + text_col] = '^';
-	__text_cursor_move_forward(1);
-	lcd_draw_text(text_col, text_row, 'C');
-	_textbuffer[text_row * TEXT_COL_SIZE + text_col] = 'C';
-	__text_cursor_move_forward(1);
-}
-
-
-static void ctrl_print(dec_parser * con_ptr){
-	char ch = con_ptr->ch;
-	if(ch > 126){
-		ch = ' ';
-		// lcd_text_putuint(ch);
-		return;
-	}else if (ch < 32){
-		switch(ch){
-			case 0 ... 6: break;
-			case 7: break;
-			case '\b': // \b == 8
-				__text_cursor_move_backward(1);
-				break;
-			case '\r': // \r == 10
-				__text_cursor_row_head();
-				__text_cursor_newline();
-				break;
-			case '\n': // \r == 13
-				__text_cursor_row_head();
-				__text_cursor_newline();
-				break;
-			default:
-				// lcd_text_putuint(ch);
-				break;
-		}
-		return;
-	}
-	_textbuffer[text_row * TEXT_COL_SIZE + text_col] = ch;
-	// -- write to memory
-	lcd_draw_text(text_col, text_row, ch);
-	__text_cursor_move_forward(1);
-}
-
-
-static void ctrl_EL(dec_parser * con_ptr){
-	for(uint16_t col = text_col;col<TEXT_COL_SIZE;col++){
-		_textbuffer[text_row * TEXT_COL_SIZE + col] = 0;
-		lcd_draw_text(col,text_row,' ');
-	}
-}
-
-
-static void ctrl_dummy(dec_parser * con_ptr){
-	lcd_text_putc('*');
-	lcd_text_putuint(con_ptr->ch);
 }
