@@ -440,9 +440,12 @@ static void __text_cursor_move_forward(){
 		text_col = 0;
 		text_row ++;
 	}
+
 	if(text_row >= TEXT_ROW_SIZE){
-		text_row = 0;
+		__text_scroll_down();
+		text_row = TEXT_ROW_SIZE - 1;
 		text_col = 0;
+		__text_clear_row(text_row);
 	}
 }
 
