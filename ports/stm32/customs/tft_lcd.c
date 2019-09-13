@@ -7,6 +7,7 @@
 #include "stm32f7xx_hal.h"
 #include "customs/font8x8/font8x8_basic.h"
 #include "customs/L8_320x240.h"
+#include "customs/DECParser.h"
 // #include "customs/debug_info.h"
 
 #define LCD_DISP_PIN 			GPIO_PIN_12
@@ -23,7 +24,7 @@
 // static volatile uint8_t _framebuffer[LCD_WIDTH * LCD_HEIGHT] = {0};
 
 // -- Text Buffer 60 x 34 for saving ASCII code
-static volatile uint8_t _textbuffer[TEXT_COL_MAX * TEXT_ROW_MAX] = {0};
+static volatile uint8_t _textbuffer[TEXT_COL_SIZE * TEXT_ROW_SIZE] = {0};
 
 static uint16_t text_col = 0;
 static uint16_t text_row = 0;
@@ -40,7 +41,7 @@ static void __lcd_framebuffer_config(uint32_t FBStartAdress);
 
 // -- cursor move operation
 static void __text_cursor_move_forward();
-static void __text_cursor_move_backward();
+static void __text_cursor_move_backward(uint16_t count);
 static void __text_clear_row(uint16_t row_num);
 static void __text_cursor_row_head();
 static void __text_scroll_down();
@@ -50,6 +51,40 @@ static void __text_cursor_newline();
 static void _draw_pixel_rgb565(uint16_t x, uint16_t y, uint16_t color_code);
 static void _draw_pixel_l8(uint16_t x, uint16_t y, uint16_t color_code);
 
+// -- console object
+//
+//
+static dec_parser console;
+
+static void ctrl_CUU(dec_parser * con_ptr);
+static void ctrl_CUD(dec_parser * con_ptr);
+static void ctrl_CUF(dec_parser * con_ptr);
+static void ctrl_CUB(dec_parser * con_ptr);
+static void ctrl_LF(dec_parser * con_ptr);
+static void ctrl_CR(dec_parser * con_ptr);
+static void ctrl_BS(dec_parser * con_ptr);
+static void ctrl_ETX(dec_parser * con_ptr);
+static void ctrl_EL(dec_parser * con_ptr);
+static void ctrl_print(dec_parser * con_ptr);
+static void ctrl_dummy(dec_parser * con_ptr);
+
+static dec_key_func_pair _cmd_map[] = {
+	{CTRL_CUU, ctrl_CUU},
+	{CTRL_CUD, ctrl_CUD},
+	{CTRL_CUF, ctrl_CUF},
+	{CTRL_CUB, ctrl_CUB},
+	{CTRL_LF , ctrl_LF },
+	{CTRL_CR , ctrl_CR },
+	{CTRL_BS , ctrl_BS },
+	{CTRL_ETX, ctrl_ETX},
+//	{CTRL_IND, ctrl_IND},
+	{CTRL_EL , ctrl_EL }, // CSI n K
+	{CTRL_PRINT, ctrl_print},
+	{CTRL_, ctrl_dummy},
+	{0, NULL},
+};
+
+static dec_key_func_pair *cmd_map_ptr = _cmd_map;
 
 
 /*
@@ -211,6 +246,7 @@ void lcd_init(){
 	__lcd_pins_config();
 	__lcd_periph_config();
 	__lcd_framebuffer_config((uint32_t)fb_ptr);
+	dec_paraser_init(&console, cmd_map_ptr);
 }
 
 void lcd_deinit(){
@@ -318,9 +354,9 @@ void lcd_draw_set_text_color(uint16_t chr_color, uint16_t bg_color){
  * */
 
 void lcd_text_refresh(){
-	for(uint16_t row = 0 ; row < TEXT_ROW_MAX ; row++){
-		for(uint16_t col = 0 ; col < TEXT_COL_MAX ; col++){
-			lcd_draw_text(col,row,_textbuffer[row * TEXT_COL_MAX + col]);
+	for(uint16_t row = 0 ; row < TEXT_ROW_SIZE ; row++){
+		for(uint16_t col = 0 ; col < TEXT_COL_SIZE ; col++){
+			lcd_draw_text(col,row,_textbuffer[row * TEXT_COL_SIZE + col]);
 		}
 	}
 }
@@ -328,37 +364,39 @@ void lcd_text_refresh(){
 
 void lcd_text_putc(char ch){
 	// PF("[lcd text putc][%c][%d]\r\n",ch,ch);
-	if(ch > 126){
-		ch = ' ';
-		lcd_text_putuint(ch);
-		return;
-	}else if (ch < 32){
-		switch(ch){
-			case 0 ... 6: break;
-			case 7: break;
-			case '\b': // \b == 8
-				__text_cursor_move_backward();
-				_textbuffer[text_row * TEXT_COL_MAX + text_col] = 0;
-				lcd_draw_text(text_col, text_row,' ');
-				break;
-			case '\r': // \r == 10
-				__text_cursor_row_head();
-				// __text_cursor_newline();
-				break;
-			case '\n': // \r == 13
-				// __text_cursor_row_head();
-				__text_cursor_newline();
-				break;
-			default:
-				lcd_text_putuint(ch);
-				break;
-		}
-		return;
-	}
-	_textbuffer[text_row * TEXT_COL_MAX + text_col] = ch;
-	// -- write to memory
-	lcd_draw_text(text_col, text_row, ch);
-	__text_cursor_move_forward();
+	console.putch(&console,ch);
+	// lcd_text_putuint(ch);
+//	if(ch > 126){
+//		ch = ' ';
+//		lcd_text_putuint(ch);
+//		return;
+//	}else if (ch < 32){
+//		switch(ch){
+//			case 0 ... 6: break;
+//			case 7: break;
+//			case '\b': // \b == 8
+//				__text_cursor_move_backward(1);
+//				_textbuffer[text_row * TEXT_COL_SIZE + text_col] = 0;
+//				lcd_draw_text(text_col, text_row,' ');
+//				break;
+//			case '\r': // \r == 10
+//				__text_cursor_row_head();
+//				// __text_cursor_newline();
+//				break;
+//			case '\n': // \r == 13
+//				// __text_cursor_row_head();
+//				__text_cursor_newline();
+//				break;
+//			default:
+//				lcd_text_putuint(ch);
+//				break;
+//		}
+//		return;
+//	}
+//	_textbuffer[text_row * TEXT_COL_SIZE + text_col] = ch;
+//	// -- write to memory
+//	lcd_draw_text(text_col, text_row, ch);
+//	__text_cursor_move_forward();
 }
 
 void lcd_text_putstr(const char *str, uint16_t len){
@@ -415,31 +453,53 @@ void lcd_text_cur_pos(uint16_t * col, uint16_t * row){
 }
 
 
+static void __text_cursor_move_up(uint16_t count){
+ 	while(count--){
+ 		if(text_row == 0){
+ 			return;
+ 		}
+ 		text_row --;
+ 	}
+}
+
+static void __text_cursor_move_down(uint16_t count){
+	while(count--){
+		text_row++;
+		if(text_row >= TEXT_ROW_SIZE){
+			text_row = TEXT_ROW_SIZE - 1;
+			return;
+		}
+	}
+}
 
 
 static void __text_cursor_move_forward(){
 	text_col++;
-	if(text_col >= TEXT_COL_MAX){
+	if(text_col >= TEXT_COL_SIZE){
 		text_col = 0;
 		text_row ++;
 	}
-	if(text_row >= TEXT_ROW_MAX){
+	if(text_row >= TEXT_ROW_SIZE){
 		text_row = 0;
 		text_col = 0;
 	}
 }
 
-static void __text_cursor_move_backward(){
-	if(text_col > 0){
-		text_col--;
+static void __text_cursor_move_backward(uint16_t count){
+	while(count--){
+		if(text_col == 0){
+			return;
+		}else{
+			text_col--;
+		}
 	}
 }
 
 static void __text_clear_row(uint16_t row_num){
-	if(row_num <= TEXT_ROW_MAX){
+	if(row_num <= TEXT_ROW_SIZE){
 		uint16_t col = 0;
-		for(col=0;col<TEXT_COL_MAX;col++){
-			_textbuffer[TEXT_COL_MAX*row_num + col] = 0;
+		for(col=0;col<TEXT_COL_SIZE;col++){
+			_textbuffer[TEXT_COL_SIZE*row_num + col] = 0;
 			lcd_draw_text(col,row_num,' ');
 		}
 	}
@@ -452,11 +512,11 @@ static void __text_cursor_row_head(){
 
 static void __text_scroll_down(){
 	uint16_t row_i = 0;
-	for(row_i=0;row_i<(TEXT_ROW_MAX-1);row_i++){
+	for(row_i=0;row_i<(TEXT_ROW_SIZE-1);row_i++){
 		uint16_t col_i = 0;
-		for(col_i=0;col_i<TEXT_COL_MAX;col_i++){
-			_textbuffer[TEXT_COL_MAX*row_i + col_i] = 
-			_textbuffer[TEXT_COL_MAX*(row_i+1) + col_i];
+		for(col_i=0;col_i<TEXT_COL_SIZE;col_i++){
+			_textbuffer[TEXT_COL_SIZE*row_i + col_i] = 
+			_textbuffer[TEXT_COL_SIZE*(row_i+1) + col_i];
 		}
 	}
 	lcd_text_refresh();
@@ -466,8 +526,8 @@ static void __text_cursor_newline(){
 
 	// reach the bottom
 	text_row ++;
-	if(text_row >= TEXT_ROW_MAX){
-		text_row = TEXT_ROW_MAX - 1;
+	if(text_row >= TEXT_ROW_SIZE){
+		text_row = TEXT_ROW_SIZE - 1;
 		__text_scroll_down();
 	}
 	// clean this line
@@ -519,7 +579,7 @@ void lcd_test_text_mode(){
 void lcd_test_text_BS(){
 	static char ch = '!';
 	// static uint16_t count = 0;
-	for(int i = 0 ;i<TEXT_COL_MAX+3;i++){
+	for(int i = 0 ;i<TEXT_COL_SIZE+3;i++){
 		lcd_text_putc(ch++);
 		if(ch >= 125) ch = ' ';
 	}
@@ -527,4 +587,101 @@ void lcd_test_text_BS(){
 		lcd_text_putc(8);
 		HAL_Delay(200);
 	}
+}
+
+static void ctrl_CUU(dec_parser * con_ptr){
+ 	uint16_t count = con_ptr->params[0];
+ 	if(count == 0) count = 1;
+ 	__text_cursor_move_up(count);
+}
+
+static void ctrl_CUD(dec_parser * con_ptr){
+	uint16_t count = con_ptr->params[0];
+	if(count == 0) count = 1;
+	__text_cursor_move_down(count);
+}
+
+static void ctrl_CUF(dec_parser * con_ptr){
+	uint16_t count = con_ptr->params[0];
+	if(count == 0) count = 1;
+	__text_cursor_move_forward(count);
+}
+
+static void ctrl_CUB(dec_parser * con_ptr){
+	uint16_t count = con_ptr->params[0];
+	if(count == 0) count = 1;
+	__text_cursor_move_backward(count);
+}
+ 
+static void ctrl_LF(dec_parser * con_ptr){
+	__text_cursor_newline();
+}
+ 
+static void ctrl_CR(dec_parser * con_ptr){
+	__text_cursor_row_head();
+	__text_cursor_newline();
+}
+
+static void ctrl_BS(dec_parser * con_ptr){
+	__text_cursor_move_backward(1);
+	_textbuffer[text_row * TEXT_COL_SIZE + text_col] = con_ptr->ch;
+	lcd_draw_text(text_col, text_row, ' ');
+}
+
+static void ctrl_ETX(dec_parser * con_ptr){
+	// ctrl C 
+	lcd_draw_text(text_col, text_row, '^');
+	_textbuffer[text_row * TEXT_COL_SIZE + text_col] = '^';
+	__text_cursor_move_forward(1);
+	lcd_draw_text(text_col, text_row, 'C');
+	_textbuffer[text_row * TEXT_COL_SIZE + text_col] = 'C';
+	__text_cursor_move_forward(1);
+}
+
+
+static void ctrl_print(dec_parser * con_ptr){
+	char ch = con_ptr->ch;
+	if(ch > 126){
+		ch = ' ';
+		// lcd_text_putuint(ch);
+		return;
+	}else if (ch < 32){
+		switch(ch){
+			case 0 ... 6: break;
+			case 7: break;
+			case '\b': // \b == 8
+				__text_cursor_move_backward(1);
+				break;
+			case '\r': // \r == 10
+				__text_cursor_row_head();
+				__text_cursor_newline();
+				break;
+			case '\n': // \r == 13
+				__text_cursor_row_head();
+				__text_cursor_newline();
+				break;
+			default:
+				// lcd_text_putuint(ch);
+				break;
+		}
+		return;
+	}
+	_textbuffer[text_row * TEXT_COL_SIZE + text_col] = ch;
+	// -- write to memory
+	lcd_draw_text(text_col, text_row, ch);
+	__text_cursor_move_forward(1);
+}
+
+
+static void ctrl_EL(dec_parser * con_ptr){
+	for(uint16_t col = text_col;col<TEXT_COL_SIZE;col++){
+		_textbuffer[text_row * TEXT_COL_SIZE + col] = 0;
+		lcd_draw_text(col,text_row,' ');
+	}
+}
+
+
+static void ctrl_dummy(dec_parser * con_ptr){
+	lcd_text_putc('*');
+	lcd_text_putuint(con_ptr->ch);
 }

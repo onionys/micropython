@@ -24,8 +24,8 @@
 #define LCD_HEIGHT 272 
 #define LCD_PIXEL_SIZE 2
 
-#define TEXT_COL_MAX 60
-#define TEXT_ROW_MAX 34
+#define TEXT_COL_SIZE 60
+#define TEXT_ROW_SIZE 34
 
 // -- for initial 
 void     lcd_init(void);
