@@ -291,7 +291,7 @@ SRC_C = \
 	$(wildcard $(BOARD_DIR)/*.c)
 
 SRC_C += customs/tft_lcd.c
-SRC_C += customs/DECParser.c
+SRC_C += customs/VTterminal.c
 
 SRC_O = \
 	$(STARTUP_FILE) \

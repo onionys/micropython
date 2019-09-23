@@ -15,6 +15,13 @@
  * 		RGB 565  mode; each pixel need two byte
  * */
 #define PIXEL_FORMAT LTDC_PIXEL_FORMAT_L8
+#define LCD_DRAW_PIXEL(x,y,color_code) ((uint8_t*)pLayerCfg.FBStartAdress)[(y)*LCD_WIDTH+(x)] = color_code
+#define DECLARE_FB_PTR(p) uint8_t(*p)[LCD_WIDTH]=(uint8_t(*)[LCD_WIDTH])pLayerCfg.FBStartAdress
+// ----------------------------------------
+// #define PIXEL_FORMAT PIXEL_FORMAT
+// #define LCD_DRAW_PIXEL(x,y,color_code) ((uint16_t*)pLayerCfg.FBStartAdress)[(y)*LCD_WIDTH+(x)] = color_code
+// #define DECLARE_FB_PTR(ptr) uint16_t (*ptr)[LCD_WIDTH] = (uint16_t (*)[LCD_WIDTH])pLayerCfg.FBStartAdress
+// ----------------------------------------
 
 
 

@@ -16,9 +16,9 @@
  *          ... CTRL_ACK ....
  *          ... CTRL_BS  ....
  *          ...
- *       }dec_ctrl_func_code;
+ *       }vt_ctrl_code;
  *
- * dec_key_func_pair cmd_map[] = {
+ * vt_key_func_pair cmd_map[] = {
  * 	{CTRL_CUD, callback_cud},
  * 	{CTRL_ACK, callback_ack},
  * 	{0, NULL}, // -- need terminal by this
@@ -26,13 +26,13 @@
  * */
 
 
-#ifndef __DEC_PARSER_H__
-#define __DEC_PARSER_H__
+#ifndef __VT_TERMINAL_H__
+#define __VT_TERMINAL_H__
 #include <stdint.h>
 
-typedef struct _dec_key_func_pair dec_key_func_pair;
-typedef struct _dec_parser dec_parser;
-typedef void (*dec_func_ptr)(dec_parser *dp);
+typedef struct _vt_key_func_pair vt_key_func_pair;
+typedef struct _vt_terminal vt_terminal;
+typedef void (*vt_func_ptr)(vt_terminal *vt);
 
 
 typedef enum{
@@ -53,7 +53,7 @@ typedef enum{
 	DEC_STATE_APC_STR   = 15,
 	DEC_STATE_GROUND    = 16,
 	DEC_STATE_ERROR     = 17,
-} dec_state;
+} vt_state;
 
 
 typedef enum{
@@ -238,21 +238,32 @@ typedef enum{
 	CTRL_GSS,
 	CTRL_DECKPAM, // Set alternate keypad mode
 	CTRL_DECKPNM, // Set numeric keypad mode
-	CTRL_PRINT,   // defined by onionys
+	CTRL_PUTC,   // defined by onionys
 	CTRL_
-}dec_ctrl_func_code;
+}vt_ctrl_code;
 
-typedef struct _dec_key_func_pair{
-	dec_ctrl_func_code key;
-	dec_func_ptr func_ptr;
-	// void (*func_ptr) (dec_parser *dp);
-}dec_key_func_pair;
+typedef struct _vt_key_func_pair{
+	vt_ctrl_code key;
+	vt_func_ptr func_ptr;
+	// void (*func_ptr) (vt_terminal *vt);
+}vt_key_func_pair;
 
 
-typedef struct _dec_parser{
-	dec_state state;
-	dec_state pre_state;
+typedef struct _vt_terminal{
+	vt_state state;
+	vt_state pre_state;
 	uint8_t ch;
+
+	// -- terminal text buffer 
+	// char * textbuffer;
+	// uint16_t text_buf_size;
+	// uint16_t text_col_size;
+	// uint16_t text_row_size;
+	// uint8_t *_textbuffer;
+	// uint16_t text_col;
+	// uint16_t text_row;
+	// uint16_t text_color; // 0x00ff;
+	// uint16_t text_color_bg; // 0x0000;
 
 	char _intermediate_char_buff[5];
 	uint8_t _inte_len;
@@ -261,49 +272,49 @@ typedef struct _dec_parser{
 	uint8_t _params_len;
 	uint16_t params[5];
 
-	void (*getch)              (dec_parser *dp,char ch);
-	void (*putch)              (dec_parser *dp,char ch);
-	void (*transfer_state_to)  (dec_parser *dp,dec_state next_state,void (*transfer_action)(struct _dec_parser *dp));
+	void (*getch)              (vt_terminal *vt,char ch);
+	void (*putch)              (vt_terminal *vt,char ch);
+	void (*transfer_state_to)  (vt_terminal *vt,vt_state next_state,void (*transfer_action)(struct _vt_terminal *vt));
 
-	void (*state_esc_do)       (dec_parser *dp);
-	void (*state_esc_inte_do)  (dec_parser *dp);
-	void (*state_csi_entry_do) (dec_parser *dp);
-	void (*state_csi_inte_do)  (dec_parser *dp);
-	void (*state_csi_ignore_do)(dec_parser *dp);
-	void (*state_csi_param_do) (dec_parser *dp);
-	void (*state_osc_str_do)   (dec_parser *dp);
-	void (*state_dcs_entry_do) (dec_parser *dp);
-	void (*state_dcs_inte_do)  (dec_parser *dp);
-	void (*state_dcs_ignore_do)(dec_parser *dp);
-	void (*state_dcs_param_do) (dec_parser *dp);
-	void (*state_dcs_pass_do)  (dec_parser *dp);
-	void (*state_sos_str_do)   (dec_parser *dp);
-	void (*state_pm_str_do)    (dec_parser *dp);
-	void (*state_apc_str_do)   (dec_parser *dp);
-	void (*state_ground_do)    (dec_parser *dp);
-	void (*state_error_do)     (dec_parser *dp);
+	void (*state_esc_do)       (vt_terminal *vt);
+	void (*state_esc_inte_do)  (vt_terminal *vt);
+	void (*state_csi_entry_do) (vt_terminal *vt);
+	void (*state_csi_inte_do)  (vt_terminal *vt);
+	void (*state_csi_ignore_do)(vt_terminal *vt);
+	void (*state_csi_param_do) (vt_terminal *vt);
+	void (*state_osc_str_do)   (vt_terminal *vt);
+	void (*state_dcs_entry_do) (vt_terminal *vt);
+	void (*state_dcs_inte_do)  (vt_terminal *vt);
+	void (*state_dcs_ignore_do)(vt_terminal *vt);
+	void (*state_dcs_param_do) (vt_terminal *vt);
+	void (*state_dcs_pass_do)  (vt_terminal *vt);
+	void (*state_sos_str_do)   (vt_terminal *vt);
+	void (*state_pm_str_do)    (vt_terminal *vt);
+	void (*state_apc_str_do)   (vt_terminal *vt);
+	void (*state_ground_do)    (vt_terminal *vt);
+	void (*state_error_do)     (vt_terminal *vt);
 
-	void (*action_collect)     (dec_parser *dp);
-	void (*action_clear)       (dec_parser *dp);
-	void (*action_execute)     (dec_parser *dp);
-	void (*action_ignore)      (dec_parser *dp);
-	void (*action_esc_dispatch)(dec_parser *dp);
-	void (*action_csi_dispatch)(dec_parser *dp);
-	void (*action_osc_start)   (dec_parser *dp);
-	void (*action_osc_put)     (dec_parser *dp);
-	void (*action_osc_end)     (dec_parser *dp);
-	char (*action_print)       (dec_parser *dp);
-	void (*action_param)       (dec_parser *dp);
-	void (*action_hook)        (dec_parser *dp);
-	void (*action_unhook)      (dec_parser *dp);
-	void (*action_put)         (dec_parser *dp);
+	void (*action_collect)     (vt_terminal *vt);
+	void (*action_clear)       (vt_terminal *vt);
+	void (*action_execute)     (vt_terminal *vt);
+	void (*action_ignore)      (vt_terminal *vt);
+	void (*action_esc_dispatch)(vt_terminal *vt);
+	void (*action_csi_dispatch)(vt_terminal *vt);
+	void (*action_osc_start)   (vt_terminal *vt);
+	void (*action_osc_put)     (vt_terminal *vt);
+	void (*action_osc_end)     (vt_terminal *vt);
+	char (*action_print)       (vt_terminal *vt);
+	void (*action_param)       (vt_terminal *vt);
+	void (*action_hook)        (vt_terminal *vt);
+	void (*action_unhook)      (vt_terminal *vt);
+	void (*action_put)         (vt_terminal *vt);
 
-	dec_key_func_pair    *cmd_map;
-	dec_func_ptr (*cmd)(dec_parser *dp, dec_ctrl_func_code cmd_code);
-} dec_parser;
+	vt_key_func_pair    *cmd_map;
+	vt_func_ptr (*cmd)(vt_terminal *vt, vt_ctrl_code cmd_code);
+} vt_terminal;
 
 
-void dec_paraser_init(dec_parser * dp, dec_key_func_pair *cmd_map);
+void vt_terminal_init(vt_terminal * vt, vt_key_func_pair *cmd_map);
 
 // -- other utility function
 uint16_t str_to_uint16(char * string);

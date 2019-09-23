@@ -7,7 +7,7 @@
 #include "stm32f7xx_hal.h"
 #include "customs/font8x8/font8x8_basic.h"
 #include "customs/L8_320x240.h"
-#include "customs/DECParser.h"
+#include "customs/VTterminal.h"
 // #include "customs/debug_info.h"
 
 #define LCD_DISP_PIN 			GPIO_PIN_12
@@ -25,6 +25,7 @@
 
 // -- Text Buffer 60 x 34 for saving ASCII code
 static volatile uint8_t _textbuffer[TEXT_COL_SIZE * TEXT_ROW_SIZE] = {0};
+static uint8_t(*tbptr)[TEXT_COL_SIZE] = (uint8_t(*)[TEXT_COL_SIZE])_textbuffer;
 
 static uint16_t text_col = 0;
 static uint16_t text_row = 0;
@@ -48,43 +49,40 @@ static void __text_scroll_down();
 static void __text_cursor_newline();
 
 
-static void _draw_pixel_rgb565(uint16_t x, uint16_t y, uint16_t color_code);
-static void _draw_pixel_l8(uint16_t x, uint16_t y, uint16_t color_code);
-
 // -- console object
 //
 //
-static dec_parser console;
+static vt_terminal console;
 
-static void ctrl_CUU(dec_parser * con_ptr);
-static void ctrl_CUD(dec_parser * con_ptr);
-static void ctrl_CUF(dec_parser * con_ptr);
-static void ctrl_CUB(dec_parser * con_ptr);
-static void ctrl_LF(dec_parser * con_ptr);
-static void ctrl_CR(dec_parser * con_ptr);
-static void ctrl_BS(dec_parser * con_ptr);
-static void ctrl_ETX(dec_parser * con_ptr);
-static void ctrl_EL(dec_parser * con_ptr);
-static void ctrl_print(dec_parser * con_ptr);
-static void ctrl_dummy(dec_parser * con_ptr);
+static void ctrl_CUU(vt_terminal * con_ptr);
+static void ctrl_CUD(vt_terminal * con_ptr);
+static void ctrl_CUF(vt_terminal * con_ptr);
+static void ctrl_CUB(vt_terminal * con_ptr);
+static void ctrl_LF(vt_terminal * con_ptr);
+static void ctrl_CR(vt_terminal * con_ptr);
+static void ctrl_BS(vt_terminal * con_ptr);
+static void ctrl_ETX(vt_terminal * con_ptr);
+static void ctrl_EL(vt_terminal * con_ptr);
+static void ctrl_putc(vt_terminal * con_ptr);
+static void ctrl_dummy(vt_terminal * con_ptr);
 
-static dec_key_func_pair _cmd_map[] = {
-	{CTRL_CUU, ctrl_CUU},
-	{CTRL_CUD, ctrl_CUD},
-	{CTRL_CUF, ctrl_CUF},
-	{CTRL_CUB, ctrl_CUB},
-	{CTRL_LF , ctrl_LF },
-	{CTRL_CR , ctrl_CR },
-	{CTRL_BS , ctrl_BS },
-	{CTRL_ETX, ctrl_ETX},
-//	{CTRL_IND, ctrl_IND},
-	{CTRL_EL , ctrl_EL }, // CSI n K
-	{CTRL_PRINT, ctrl_print},
+static vt_key_func_pair _cmd_map[] = {
+	{CTRL_CUU , ctrl_CUU },
+	{CTRL_CUD , ctrl_CUD },
+	{CTRL_CUF , ctrl_CUF },
+	{CTRL_CUB , ctrl_CUB },
+	{CTRL_LF  , ctrl_LF  },
+	{CTRL_CR  , ctrl_CR  },
+	{CTRL_BS  , ctrl_BS  },
+	{CTRL_ETX , ctrl_ETX },
+//	{CTRL_IND , ctrl_IND },
+	{CTRL_EL  , ctrl_EL  }, // CSI n K
+	{CTRL_PUTC, ctrl_putc},
 	{CTRL_, ctrl_dummy},
 	{0, NULL},
 };
 
-static dec_key_func_pair *cmd_map_ptr = _cmd_map;
+static vt_key_func_pair *cmd_map_ptr = _cmd_map;
 
 
 /*
@@ -246,7 +244,7 @@ void lcd_init(){
 	__lcd_pins_config();
 	__lcd_periph_config();
 	__lcd_framebuffer_config((uint32_t)fb_ptr);
-	dec_paraser_init(&console, cmd_map_ptr);
+	vt_terminal_init(&console, cmd_map_ptr);
 }
 
 void lcd_deinit(){
@@ -262,60 +260,51 @@ void lcd_test_run(){
  * LCD Operation API
  * */
 
+
 void lcd_draw_pixel(uint16_t x, uint16_t y, uint16_t color_code){
-	switch(pLayerCfg.PixelFormat){
-		case LTDC_PIXEL_FORMAT_L8:
-			_draw_pixel_l8(x,y,color_code);
-			break;
-		case LTDC_PIXEL_FORMAT_RGB565:
-			_draw_pixel_rgb565(x,y,color_code);
-			break;
-		default:
-			break;
-	}
-}
-
-static void _draw_pixel_rgb565(uint16_t x, uint16_t y, uint16_t color_code){
-	volatile uint16_t * fb_ptr = (uint16_t *) pLayerCfg.FBStartAdress;
-	if((x < LCD_WIDTH) && (y < LCD_HEIGHT))
-		fb_ptr[y * LCD_WIDTH + x] = color_code;
-}
-
-static void _draw_pixel_l8(uint16_t x, uint16_t y, uint16_t color_code){
-	volatile uint8_t * fb_ptr = (uint8_t *) pLayerCfg.FBStartAdress;
-	if((x < LCD_WIDTH) && (y < LCD_HEIGHT))
-		fb_ptr[y * LCD_WIDTH + x] = (uint8_t)(color_code & 0x00FF);
+	uint8_t (*ptr)[LCD_WIDTH] = (uint8_t (*)[LCD_WIDTH])pLayerCfg.FBStartAdress;
+	ptr[y][x] = color_code;
 }
 
 // ---------------------
 void lcd_draw_char(uint16_t x, uint16_t y, char ch, uint16_t color_code){
 	uint8_t *pixel_line_ptr = (uint8_t *)font8x8_basic[(uint8_t)ch];
-	uint8_t x_shift,y_shift;
+	uint8_t y_shift;
 
-	if((ch < 32) || (ch > 126)) // set default ch as SPACE
-		pixel_line_ptr = (uint8_t *)font8x8_basic[32];
+	// if((ch < 32) || (ch > 126)) // set default ch as SPACE
+	// 	pixel_line_ptr = (uint8_t *)font8x8_basic[32];
 
+	DECLARE_FB_PTR(ptr);
 	for( y_shift = 0 ; y_shift < 8 ; y_shift++ ){
-		for( x_shift = 0 ; x_shift < 8 ; x_shift++ ){
-			if((*pixel_line_ptr) & (1 << x_shift))
-				lcd_draw_pixel(x + x_shift , y + y_shift , color_code);
-		}
+		ptr[y+y_shift][x+0] = (*pixel_line_ptr & 0x01)?(color_code):(0x00);
+		ptr[y+y_shift][x+1] = (*pixel_line_ptr & 0x02)?(color_code):(0x00);
+		ptr[y+y_shift][x+2] = (*pixel_line_ptr & 0x04)?(color_code):(0x00);
+		ptr[y+y_shift][x+3] = (*pixel_line_ptr & 0x08)?(color_code):(0x00);
+		ptr[y+y_shift][x+4] = (*pixel_line_ptr & 0x10)?(color_code):(0x00);
+		ptr[y+y_shift][x+5] = (*pixel_line_ptr & 0x20)?(color_code):(0x00);
+		ptr[y+y_shift][x+6] = (*pixel_line_ptr & 0x40)?(color_code):(0x00);
+		ptr[y+y_shift][x+7] = (*pixel_line_ptr & 0x80)?(color_code):(0x00);
 		pixel_line_ptr++;
 	}
 }
 
 void lcd_draw_char_bg(uint16_t x, uint16_t y, char ch, uint16_t color_code, uint16_t bg_color_code){
 	uint8_t *pixel_line_ptr = (uint8_t *)font8x8_basic[(uint8_t)ch];
-	uint8_t x_shift,y_shift;
-	if((ch < 32) || (ch > 126))
-		pixel_line_ptr = (uint8_t *)font8x8_basic[32];
+	uint8_t y_shift;
+	// if((ch < 32) || (ch > 126))
+	// 	pixel_line_ptr = (uint8_t *)font8x8_basic[32];
+	// uint8_t (*ptr)[LCD_WIDTH] = (uint8_t (*)[LCD_WIDTH])pLayerCfg.FBStartAdress;
+
+	DECLARE_FB_PTR(ptr);
 	for( y_shift = 0 ; y_shift < 8 ; y_shift++ ){
-		for( x_shift = 0 ; x_shift < 8 ; x_shift++ ){
-			if((*pixel_line_ptr) & (1 << x_shift))
-				lcd_draw_pixel(x + x_shift , y + y_shift , color_code);
-			else
-				lcd_draw_pixel(x + x_shift , y + y_shift , bg_color_code);
-		}
+		ptr[y+y_shift][x+0] = (*pixel_line_ptr & 0x01)?(color_code):(bg_color_code);
+		ptr[y+y_shift][x+1] = (*pixel_line_ptr & 0x02)?(color_code):(bg_color_code);
+		ptr[y+y_shift][x+2] = (*pixel_line_ptr & 0x04)?(color_code):(bg_color_code);
+		ptr[y+y_shift][x+3] = (*pixel_line_ptr & 0x08)?(color_code):(bg_color_code);
+		ptr[y+y_shift][x+4] = (*pixel_line_ptr & 0x10)?(color_code):(bg_color_code);
+		ptr[y+y_shift][x+5] = (*pixel_line_ptr & 0x20)?(color_code):(bg_color_code);
+		ptr[y+y_shift][x+6] = (*pixel_line_ptr & 0x40)?(color_code):(bg_color_code);
+		ptr[y+y_shift][x+7] = (*pixel_line_ptr & 0x80)?(color_code):(bg_color_code);
 		pixel_line_ptr++;
 	}
 }
@@ -324,7 +313,9 @@ void lcd_draw_char_bg(uint16_t x, uint16_t y, char ch, uint16_t color_code, uint
 uint16_t lcd_read_pixel(uint16_t x, uint16_t y){
 	// __IO uint16_t (*_fb)[480] = &_framebuffer;
 	// return _fb[y][x];
-	return ((uint8_t *) pLayerCfg.FBStartAdress)[y * LCD_WIDTH + x];
+	DECLARE_FB_PTR(ptr);
+	return ptr[y][x];
+	// return ((uint8_t *) pLayerCfg.FBStartAdress)[y * LCD_WIDTH + x];
 }
 
 
@@ -356,9 +347,11 @@ void lcd_draw_set_text_color(uint16_t chr_color, uint16_t bg_color){
 void lcd_text_refresh(){
 	for(uint16_t row = 0 ; row < TEXT_ROW_SIZE ; row++){
 		for(uint16_t col = 0 ; col < TEXT_COL_SIZE ; col++){
-			lcd_draw_text(col,row,_textbuffer[row * TEXT_COL_SIZE + col]);
+			// lcd_draw_text(col,row,_textbuffer[row * TEXT_COL_SIZE + col]);
+			lcd_draw_text(col,row,tbptr[row][col]);
 		}
 	}
+	SCB_CleanDCache();
 }
 
 
@@ -463,7 +456,8 @@ static void __text_clear_row(uint16_t row_num){
 	if(row_num <= TEXT_ROW_SIZE){
 		uint16_t col = 0;
 		for(col=0;col<TEXT_COL_SIZE;col++){
-			_textbuffer[TEXT_COL_SIZE*row_num + col] = 0;
+			// _textbuffer[TEXT_COL_SIZE*row_num + col] = 0;
+			tbptr[row_num][col] = 0;
 			lcd_draw_text(col,row_num,' ');
 		}
 	}
@@ -479,8 +473,9 @@ static void __text_scroll_down(){
 	for(row_i=0;row_i<(TEXT_ROW_SIZE-1);row_i++){
 		uint16_t col_i = 0;
 		for(col_i=0;col_i<TEXT_COL_SIZE;col_i++){
-			_textbuffer[TEXT_COL_SIZE*row_i + col_i] = 
-			_textbuffer[TEXT_COL_SIZE*(row_i+1) + col_i];
+			tbptr[row_i][col_i] = tbptr[row_i+1][col_i];
+			// _textbuffer[TEXT_COL_SIZE*row_i + col_i] = 
+			// _textbuffer[TEXT_COL_SIZE*(row_i+1) + col_i];
 		}
 	}
 	lcd_text_refresh();
@@ -502,52 +497,52 @@ static void __text_cursor_newline(){
  * ctrl_ function implement
  * */
 
-static void ctrl_CUU(dec_parser * con_ptr){
+static void ctrl_CUU(vt_terminal * con_ptr){
  	uint16_t count = con_ptr->params[0];
  	if(count == 0) count = 1;
  	__text_cursor_move_up(count);
 }
 
 
-static void ctrl_CUD(dec_parser * con_ptr){
+static void ctrl_CUD(vt_terminal * con_ptr){
 	uint16_t count = con_ptr->params[0];
 	if(count == 0) count = 1;
 	__text_cursor_move_down(count);
 }
 
 
-static void ctrl_CUF(dec_parser * con_ptr){
+static void ctrl_CUF(vt_terminal * con_ptr){
 	uint16_t count = con_ptr->params[0];
 	if(count == 0) count = 1;
 	__text_cursor_move_forward(count);
 }
 
 
-static void ctrl_CUB(dec_parser * con_ptr){
+static void ctrl_CUB(vt_terminal * con_ptr){
 	uint16_t count = con_ptr->params[0];
 	if(count == 0) count = 1;
 	__text_cursor_move_backward(count);
 }
  
 
-static void ctrl_LF(dec_parser * con_ptr){
+static void ctrl_LF(vt_terminal * con_ptr){
 	__text_cursor_newline();
 }
  
 
-static void ctrl_CR(dec_parser * con_ptr){
+static void ctrl_CR(vt_terminal * con_ptr){
 	__text_cursor_row_head();
 }
 
 
-static void ctrl_BS(dec_parser * con_ptr){
+static void ctrl_BS(vt_terminal * con_ptr){
 	__text_cursor_move_backward(1);
 	// _textbuffer[text_row * TEXT_COL_SIZE + text_col] = con_ptr->ch;
 	// lcd_draw_text(text_col, text_row, ' ');
 }
 
 
-static void ctrl_ETX(dec_parser * con_ptr){
+static void ctrl_ETX(vt_terminal * con_ptr){
 	// ctrl C 
 	lcd_draw_text(text_col, text_row, '^');
 	_textbuffer[text_row * TEXT_COL_SIZE + text_col] = '^';
@@ -558,47 +553,27 @@ static void ctrl_ETX(dec_parser * con_ptr){
 }
 
 
-static void ctrl_print(dec_parser * con_ptr){
-	char ch = con_ptr->ch;
-	if(ch > 126){
-		ch = ' ';
-		// lcd_text_putuint(ch);
-		return;
-	}else if (ch < 32){
-		switch(ch){
-			case 0 ... 6: break;
-			case 7: break;
-			case '\b': // \b == 8
-				__text_cursor_move_backward(1);
-				break;
-			case '\r': // \r == 10
-				__text_cursor_row_head();
-				break;
-			case '\n': // \r == 13
-				__text_cursor_newline();
-				break;
-			default:
-				// lcd_text_putuint(ch);
-				break;
-		}
-		return;
-	}
-	_textbuffer[text_row * TEXT_COL_SIZE + text_col] = ch;
+static void ctrl_putc(vt_terminal * vt_ptr){
+	char ch = vt_ptr->ch;
+	// _textbuffer[text_row * TEXT_COL_SIZE + text_col] = ch;
+	tbptr[text_row][text_col] = ch;
 	// -- write to memory
-	lcd_draw_text(text_col, text_row, ch);
+	// lcd_draw_text(text_col, text_row, ch);
+	lcd_draw_text(text_col, text_row, tbptr[text_row][text_col]);
 	__text_cursor_move_forward(1);
 }
 
 
-static void ctrl_EL(dec_parser * con_ptr){
+static void ctrl_EL(vt_terminal * con_ptr){
 	for(uint16_t col = text_col;col<TEXT_COL_SIZE;col++){
-		_textbuffer[text_row * TEXT_COL_SIZE + col] = 0;
+		// _textbuffer[text_row * TEXT_COL_SIZE + col] = 0;
+		tbptr[text_row][col] = 0;
 		lcd_draw_text(col,text_row,' ');
 	}
 }
 
 
-static void ctrl_dummy(dec_parser * con_ptr){
+static void ctrl_dummy(vt_terminal * con_ptr){
 	lcd_text_putc('*');
 	lcd_text_putuint(con_ptr->ch);
 }
